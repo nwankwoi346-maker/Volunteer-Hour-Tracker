@@ -6,6 +6,14 @@
 (define-constant err-not-verified (err u104))
 (define-constant err-already-verified (err u105))
 (define-constant err-insufficient-balance (err u106))
+(define-constant err-milestone-not-reached (err u107))
+(define-constant err-milestone-already-claimed (err u108))
+
+(define-constant milestone-bronze u25)
+(define-constant milestone-silver u50)
+(define-constant milestone-gold u100)
+(define-constant milestone-platinum u250)
+(define-constant milestone-diamond u500)
 
 (define-data-var next-volunteer-id uint u1)
 (define-data-var next-session-id uint u1)
@@ -61,6 +69,18 @@
   { count: uint }
 )
 
+(define-map volunteer-milestones
+  { volunteer-id: uint }
+  {
+    bronze-claimed: bool,
+    silver-claimed: bool,
+    gold-claimed: bool,
+    platinum-claimed: bool,
+    diamond-claimed: bool,
+    total-milestones: uint
+  }
+)
+
 (define-public (register-volunteer (name (string-ascii 50)) (email (string-ascii 100)))
   (let
     (
@@ -82,6 +102,17 @@
     )
     (map-set volunteer-principals {principal: tx-sender} {volunteer-id: volunteer-id})
     (map-set volunteer-session-counts {volunteer-id: volunteer-id} {count: u0})
+    (map-set volunteer-milestones
+      {volunteer-id: volunteer-id}
+      {
+        bronze-claimed: false,
+        silver-claimed: false,
+        gold-claimed: false,
+        platinum-claimed: false,
+        diamond-claimed: false,
+        total-milestones: u0
+      }
+    )
     (var-set next-volunteer-id (+ volunteer-id u1))
     (ok volunteer-id)
   )
@@ -286,5 +317,117 @@
   (match (map-get? organization-verifiers {organization: organization})
     verifier-data (is-eq principal-addr (get verifier verifier-data))
     false
+  )
+)
+
+(define-public (claim-milestone (milestone-type (string-ascii 10)))
+  (let
+    (
+      (volunteer-lookup (map-get? volunteer-principals {principal: tx-sender}))
+    )
+    (match volunteer-lookup volunteer-data
+      (let
+        (
+          (volunteer-id (get volunteer-id volunteer-data))
+          (volunteer-info (unwrap! (map-get? volunteers {volunteer-id: volunteer-id}) err-not-found))
+          (milestones (unwrap! (map-get? volunteer-milestones {volunteer-id: volunteer-id}) err-not-found))
+          (verified-hours (get verified-hours volunteer-info))
+        )
+        (if (is-eq milestone-type "bronze")
+          (begin
+            (asserts! (>= verified-hours milestone-bronze) err-milestone-not-reached)
+            (asserts! (not (get bronze-claimed milestones)) err-milestone-already-claimed)
+            (map-set volunteer-milestones
+              {volunteer-id: volunteer-id}
+              (merge milestones {bronze-claimed: true, total-milestones: (+ (get total-milestones milestones) u1)})
+            )
+            (ok "bronze")
+          )
+          (if (is-eq milestone-type "silver")
+            (begin
+              (asserts! (>= verified-hours milestone-silver) err-milestone-not-reached)
+              (asserts! (not (get silver-claimed milestones)) err-milestone-already-claimed)
+              (map-set volunteer-milestones
+                {volunteer-id: volunteer-id}
+                (merge milestones {silver-claimed: true, total-milestones: (+ (get total-milestones milestones) u1)})
+              )
+              (ok "silver")
+            )
+            (if (is-eq milestone-type "gold")
+              (begin
+                (asserts! (>= verified-hours milestone-gold) err-milestone-not-reached)
+                (asserts! (not (get gold-claimed milestones)) err-milestone-already-claimed)
+                (map-set volunteer-milestones
+                  {volunteer-id: volunteer-id}
+                  (merge milestones {gold-claimed: true, total-milestones: (+ (get total-milestones milestones) u1)})
+                )
+                (ok "gold")
+              )
+              (if (is-eq milestone-type "platinum")
+                (begin
+                  (asserts! (>= verified-hours milestone-platinum) err-milestone-not-reached)
+                  (asserts! (not (get platinum-claimed milestones)) err-milestone-already-claimed)
+                  (map-set volunteer-milestones
+                    {volunteer-id: volunteer-id}
+                    (merge milestones {platinum-claimed: true, total-milestones: (+ (get total-milestones milestones) u1)})
+                  )
+                  (ok "platinum")
+                )
+                (if (is-eq milestone-type "diamond")
+                  (begin
+                    (asserts! (>= verified-hours milestone-diamond) err-milestone-not-reached)
+                    (asserts! (not (get diamond-claimed milestones)) err-milestone-already-claimed)
+                    (map-set volunteer-milestones
+                      {volunteer-id: volunteer-id}
+                      (merge milestones {diamond-claimed: true, total-milestones: (+ (get total-milestones milestones) u1)})
+                    )
+                    (ok "diamond")
+                  )
+                  err-not-found
+                )
+              )
+            )
+          )
+        )
+      )
+      err-not-found
+    )
+  )
+)
+
+(define-read-only (get-volunteer-milestones (volunteer-id uint))
+  (map-get? volunteer-milestones {volunteer-id: volunteer-id})
+)
+
+(define-read-only (get-milestone-thresholds)
+  {
+    bronze: milestone-bronze,
+    silver: milestone-silver,
+    gold: milestone-gold,
+    platinum: milestone-platinum,
+    diamond: milestone-diamond
+  }
+)
+
+(define-read-only (get-available-milestones (volunteer-id uint))
+  (match (map-get? volunteers {volunteer-id: volunteer-id})
+    volunteer-info
+    (let
+      (
+        (verified-hours (get verified-hours volunteer-info))
+        (milestones (default-to
+          {bronze-claimed: false, silver-claimed: false, gold-claimed: false, platinum-claimed: false, diamond-claimed: false, total-milestones: u0}
+          (map-get? volunteer-milestones {volunteer-id: volunteer-id})
+        ))
+      )
+      (some {
+        bronze-available: (and (>= verified-hours milestone-bronze) (not (get bronze-claimed milestones))),
+        silver-available: (and (>= verified-hours milestone-silver) (not (get silver-claimed milestones))),
+        gold-available: (and (>= verified-hours milestone-gold) (not (get gold-claimed milestones))),
+        platinum-available: (and (>= verified-hours milestone-platinum) (not (get platinum-claimed milestones))),
+        diamond-available: (and (>= verified-hours milestone-diamond) (not (get diamond-claimed milestones)))
+      })
+    )
+    none
   )
 )
